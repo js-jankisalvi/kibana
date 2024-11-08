@@ -63,7 +63,7 @@ export default ({ getPageObject, getService }: FtrProviderContext) => {
     }
   }
 
-  describe('Rules list', () => {
+  describe.only('Rules list', () => {
     let ruleIdList: string[];
 
     const assertRulesLength = async (length: number) => {

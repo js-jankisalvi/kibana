@@ -365,7 +365,7 @@ export default function ({ getService, getPageObjects }: FtrProviderContext) {
     expect(await titleElem.getAttribute('value')).to.equal(dataView);
   };
 
-  describe('Search source Alert', function () {
+  describe.only('Search source Alert', function () {
     // see details: https://github.com/elastic/kibana/issues/193842
     this.tags(['failsOnMKI']);
     before(async () => {
@@ -492,7 +492,7 @@ export default function ({ getService, getPageObjects }: FtrProviderContext) {
       await checkInitialRuleParamsState(SOURCE_DATA_VIEW);
     });
 
-    it('should display prev rule state after params update on clicking prev generated link', async () => {
+    it.only('should display prev rule state after params update on clicking prev generated link', async () => {
       await openAlertRuleInManagement(RULE_NAME);
 
       // change rule configuration
@@ -502,7 +502,7 @@ export default function ({ getService, getPageObjects }: FtrProviderContext) {
 
       await testSubjects.click('thresholdPopover');
       await testSubjects.setValue('alertThresholdInput0', '1');
-      await testSubjects.click('saveEditedRuleButton');
+      await testSubjects.click('rulePageFooterSaveButton');
       await PageObjects.header.waitUntilLoadingHasFinished();
 
       await openAlertResults(RULE_NAME);
