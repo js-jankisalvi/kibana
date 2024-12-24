@@ -12,6 +12,7 @@ import type { IScopedClusterClient } from '@kbn/core/server';
 import type { RulesClient } from '@kbn/alerting-plugin/server';
 import { isPopulatedObject } from '@kbn/ml-is-populated-object';
 import { parseInterval } from '@kbn/ml-parse-interval';
+import type { MlAnomalyDetectionRuleParams } from '@kbn/response-ops-rule-params/anomaly_detection';
 
 import {
   getSingleMetricViewerJobErrorMessage,
@@ -53,7 +54,6 @@ import {
 import { groupsProvider } from './groups';
 import type { MlClient } from '../../lib/ml_client';
 import { ML_ALERT_TYPES } from '../../../common/constants/alerts';
-import type { MlAnomalyDetectionAlertParams } from '../../routes/schemas/alerting_schema';
 import type { AuthorizationHeader } from '../../lib/request_authorization';
 
 interface Results {
@@ -97,7 +97,7 @@ export function jobsProvider(
 
     if (deleteAlertingRules && rulesClient) {
       // Check what jobs have associated alerting rules
-      const anomalyDetectionAlertingRules = await rulesClient.find<MlAnomalyDetectionAlertParams>({
+      const anomalyDetectionAlertingRules = await rulesClient.find<MlAnomalyDetectionRuleParams>({
         options: {
           filter: `alert.attributes.alertTypeId:${ML_ALERT_TYPES.ANOMALY_DETECTION}`,
           perPage: 10000,
@@ -509,7 +509,7 @@ export function jobsProvider(
       });
 
       if (rulesClient) {
-        const mlAlertingRules = await rulesClient.find<MlAnomalyDetectionAlertParams>({
+        const mlAlertingRules = await rulesClient.find<MlAnomalyDetectionRuleParams>({
           options: {
             filter: `alert.attributes.alertTypeId:${ML_ALERT_TYPES.ANOMALY_DETECTION}`,
             perPage: 1000,

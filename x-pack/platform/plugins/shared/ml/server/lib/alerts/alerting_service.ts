@@ -28,13 +28,11 @@ import { DEFAULT_SPACE_ID } from '@kbn/spaces-plugin/common';
 import { ALERT_REASON, ALERT_URL } from '@kbn/rule-data-utils';
 import type { MlJob } from '@elastic/elasticsearch/lib/api/types';
 import { isPopulatedObject } from '@kbn/ml-is-populated-object';
+import type { MlAnomalyDetectionAlertPreviewRequest } from '@kbn/response-ops-rule-params/anomaly_detection_preview';
+import type { MlAnomalyDetectionRuleParams } from '@kbn/response-ops-rule-params/anomaly_detection';
 import { getAnomalyDescription } from '../../../common/util/anomaly_description';
 import { getMetricChangeDescription } from '../../../common/util/metric_change_description';
 import type { MlClient } from '../ml_client';
-import type {
-  MlAnomalyDetectionAlertParams,
-  MlAnomalyDetectionAlertPreviewRequest,
-} from '../../routes/schemas/alerting_schema';
 import type {
   AlertExecutionResult,
   InfluencerAnomalyAlertDoc,
@@ -630,7 +628,7 @@ export function alertingServiceProvider(
    * @param checkIntervalGap - Interval between alert executions
    */
   const fetchPreviewResults = async (
-    params: MlAnomalyDetectionAlertParams,
+    params: MlAnomalyDetectionRuleParams,
     previewTimeInterval?: string,
     checkIntervalGap?: Duration
   ): Promise<AlertExecutionResult[] | undefined> => {
@@ -770,7 +768,7 @@ export function alertingServiceProvider(
    * @return Params required for performing ES query for anomalies.
    */
   const getQueryParams = async (
-    params: MlAnomalyDetectionAlertParams
+    params: MlAnomalyDetectionRuleParams
   ): Promise<AnomalyESQueryParams | void> => {
     const jobAndGroupIds = [
       ...(params.jobSelection.jobIds ?? []),
@@ -932,7 +930,7 @@ export function alertingServiceProvider(
 
   const getFormatted = async (
     indexPattern: string,
-    resultType: MlAnomalyDetectionAlertParams['resultType'],
+    resultType: MlAnomalyDetectionRuleParams['resultType'],
     spaceId: string,
     value: AggResultsResponse
   ): Promise<
@@ -975,7 +973,7 @@ export function alertingServiceProvider(
      * @param spaceId
      */
     execute: async (
-      params: MlAnomalyDetectionAlertParams,
+      params: MlAnomalyDetectionRuleParams,
       spaceId: string,
       state?: AnomalyDetectionRuleState
     ): Promise<

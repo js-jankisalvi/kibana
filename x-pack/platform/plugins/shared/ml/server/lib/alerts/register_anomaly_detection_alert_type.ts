@@ -23,6 +23,10 @@ import { ALERT_REASON, ALERT_URL } from '@kbn/rule-data-utils';
 import type { MlAnomalyDetectionAlert } from '@kbn/alerts-as-data-utils';
 import { ES_FIELD_TYPES } from '@kbn/field-types';
 import {
+  type MlAnomalyDetectionRuleParams,
+  mlAnomalyDetectionParamsSchema,
+} from '@kbn/response-ops-rule-params/anomaly_detection';
+import {
   ALERT_ANOMALY_DETECTION_JOB_ID,
   ALERT_ANOMALY_IS_INTERIM,
   ALERT_ANOMALY_SCORE,
@@ -33,10 +37,6 @@ import {
 } from '../../../common/constants/alerts';
 import { PLUGIN_ID } from '../../../common/constants/app';
 import { MINIMUM_FULL_LICENSE } from '../../../common/license';
-import {
-  type MlAnomalyDetectionAlertParams,
-  mlAnomalyDetectionAlertParams,
-} from '../../routes/schemas/alerting_schema';
 import type { RegisterAlertParams } from './register_ml_alerts';
 import type { InfluencerAnomalyAlertDoc } from '../../../common/types/alerts';
 import { type RecordAnomalyAlertDoc } from '../../../common/types/alerts';
@@ -161,7 +161,7 @@ export function registerAnomalyDetectionAlertType({
   const fieldFormatCache = new Map<string, AnomalyDetectionRuleState>();
 
   alerting.registerType<
-    MlAnomalyDetectionAlertParams,
+    MlAnomalyDetectionRuleParams,
     never, // Only use if defining useSavedObjectReferences hook
     RuleTypeState,
     AlertInstanceState,
@@ -177,12 +177,12 @@ export function registerAnomalyDetectionAlertType({
     actionGroups: [THRESHOLD_MET_GROUP],
     defaultActionGroupId: ANOMALY_SCORE_MATCH_GROUP_ID,
     validate: {
-      params: mlAnomalyDetectionAlertParams,
+      params: mlAnomalyDetectionParamsSchema,
     },
     schemas: {
       params: {
         type: 'config-schema',
-        schema: mlAnomalyDetectionAlertParams,
+        schema: mlAnomalyDetectionParamsSchema,
       },
     },
     actionVariables: {
@@ -254,7 +254,7 @@ export function registerAnomalyDetectionAlertType({
       params,
       spaceId,
       rule,
-    }: ExecutorOptions<MlAnomalyDetectionAlertParams>) => {
+    }: ExecutorOptions<MlAnomalyDetectionRuleParams>) => {
       const fakeRequest = Object.create(null) as KibanaRequest;
       const alertingService = mlSharedServices.alertingServiceProvider(
         services.savedObjectsClient,

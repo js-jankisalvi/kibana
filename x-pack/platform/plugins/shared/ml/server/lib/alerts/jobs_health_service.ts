@@ -13,9 +13,9 @@ import type { MlJob } from '@elastic/elasticsearch/lib/api/typesWithBodyKey';
 import { isDefined } from '@kbn/ml-is-defined';
 import { ALERT_REASON } from '@kbn/rule-data-utils';
 import { parseInterval } from '@kbn/ml-parse-interval';
+import type { JobSelection } from '@kbn/response-ops-rule-params/anomaly_detection_jobs_health';
 
 import type { MlClient } from '../ml_client';
-import type { JobSelection } from '../../routes/schemas/alerting_schema';
 import { datafeedsProvider, type DatafeedsService } from '../../models/job_service/datafeeds';
 import {
   ALERT_DATAFEED_RESULTS,
