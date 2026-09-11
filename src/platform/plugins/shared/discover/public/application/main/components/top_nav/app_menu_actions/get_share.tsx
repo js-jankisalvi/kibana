@@ -203,6 +203,12 @@ const getExportItems = (
     (item: ShareActionIntents) =>
       item.shareType === 'integration' && 'id' in item && item.id === 'csvReports'
   );
+  const canScheduleExport = exportIntegrations.some(
+    (item: ShareActionIntents) =>
+      item.shareType === 'integration' &&
+      'id' in item &&
+      (item.id === 'pdfReports' || item.id === 'imageReports' || item.id === 'csvReports')
+  );
   const hasScheduledReports = exportDerivatives.some(
     (item: ShareActionIntents) =>
       item.shareType === 'integration' && 'id' in item && item.id === 'scheduledReports'
@@ -227,7 +233,7 @@ const getExportItems = (
     });
   }
 
-  if (hasScheduledReports) {
+  if (hasScheduledReports && canScheduleExport) {
     exportItems.push({
       id: 'scheduledReports',
       label: i18n.translate('discover.localMenu.export.scheduleExportLabel', {
