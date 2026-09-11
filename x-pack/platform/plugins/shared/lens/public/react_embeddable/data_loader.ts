@@ -16,6 +16,7 @@ import type {
 } from '@kbn/lens-common';
 import type { LensApi } from '@kbn/lens-common-2';
 import {
+  apiPublishesApproximation,
   apiPublishesProjectRouting,
   apiPublishesUnifiedSearch,
   fetch$,
@@ -87,6 +88,10 @@ function getSearchContext(parentApi: unknown) {
     ? parentApi
     : { projectRouting$: undefined };
 
+  const { isApproximate$ } = apiPublishesApproximation(parentApi)
+    ? parentApi
+    : { isApproximate$: new BehaviorSubject(false) };
+
   return {
     filters: unifiedSearch$.filters$.getValue(),
     query: unifiedSearch$.query$.getValue(),
@@ -96,6 +101,7 @@ function getSearchContext(parentApi: unknown) {
       ? parentApi.esqlVariables$.getValue()
       : undefined,
     projectRouting: projectRouting$?.getValue(),
+    isApproximate: isApproximate$.getValue(),
   };
 }
 
@@ -111,7 +117,8 @@ export function loadEmbeddableData(
   parentApi: unknown,
   internalApi: LensInternalApi,
   services: LensEmbeddableStartServices,
-  metaInfo?: SharingSavedObjectProps
+  metaInfo?: SharingSavedObjectProps,
+  setApproximationApplied?: (value: boolean | undefined) => void
 ) {
   const { onLoad, onBeforeBadgesRender, ...callbacks } = apiHasLensComponentCallbacks(parentApi)
     ? parentApi
@@ -207,9 +214,14 @@ export function loadEmbeddableData(
     // _data (expression result) is unused — Lens only needs the inspector adapters.
     // The signature OnDataCallback is used for consistency with the expressions plugin.
     const onDataCallback: OnDataCallback = (_data, adapters) => {
-      internalApi.updateVisualizationContext({
-        activeData: hasTablesAdapter(adapters) ? adapters.tables?.tables : undefined,
-      });
+      const tables = hasTablesAdapter(adapters) ? adapters.tables?.tables : undefined;
+      internalApi.updateVisualizationContext({ activeData: tables });
+      if (setApproximationApplied) {
+        const approximationApplied = tables
+          ? Object.values(tables).some((t) => t.meta?.approximationApplied)
+          : undefined;
+        setApproximationApplied(approximationApplied || undefined);
+      }
 
       // data has loaded
       internalApi.updateDataLoading(false);
@@ -298,7 +310,7 @@ export function loadEmbeddableData(
       internalApi.updateExpressionParams(params);
     }
 
-    internalApi.updateAbortController(abortController);
+    internalApi.updateAbortController(abortController ?? new AbortController());
   }
 
   // Build a custom operator to be resused for various observables

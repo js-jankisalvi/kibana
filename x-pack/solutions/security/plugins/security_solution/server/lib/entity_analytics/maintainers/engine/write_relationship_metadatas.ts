@@ -7,6 +7,7 @@
 
 import type { Logger } from '@kbn/logging';
 import type { EntityMetadataClient } from '@kbn/entity-store/server';
+import { formatBulkDropSummary } from '@kbn/entity-store/server';
 import type { RelationshipKind, RelationshipMetadataDoc } from '@kbn/entity-store/common';
 
 import type { EntityRelationshipRecord } from './types';
@@ -73,6 +74,7 @@ function buildRelationshipMetadata(
 export interface WriteRelationshipMetadatasResult {
   docsAttempted: number;
   docsApplied: number;
+  docsFailed: number;
 }
 
 export const writeRelationshipMetadatas = async (
@@ -81,7 +83,7 @@ export const writeRelationshipMetadatas = async (
   records: EntityRelationshipRecord[],
   context: WriteRelationshipMetadataContext
 ): Promise<WriteRelationshipMetadatasResult> => {
-  if (records.length === 0) return { docsAttempted: 0, docsApplied: 0 };
+  if (records.length === 0) return { docsAttempted: 0, docsApplied: 0, docsFailed: 0 };
 
   const validRecords = records.filter(
     (r): r is EntityRelationshipRecord & { entityId: string } => r.entityId !== null
@@ -95,16 +97,21 @@ export const writeRelationshipMetadatas = async (
     }
   }
 
-  if (docs.length === 0) return { docsAttempted: 0, docsApplied: 0 };
+  if (docs.length === 0) return { docsAttempted: 0, docsApplied: 0, docsFailed: 0 };
 
-  const { successful, failed } = await entityMetadataClient.bulkAppendMetadata(docs);
+  const { successful, failed, dropsByType } = await entityMetadataClient.bulkAppendMetadata(docs);
 
   if (failed > 0) {
-    // Per-doc drop reasons are logged in the entity-store infra layer's onDrop hook.
-    logger.error(`Failed to append ${failed} of ${docs.length} relationship metadata`);
+    // Aggregated by error type in the entity-store infra layer (a systemic
+    // failure, e.g. missing privileges, rejects every doc identically) —
+    // logged once here rather than once per dropped doc.
+    const reasons = dropsByType?.length
+      ? ` Failures by type: ${formatBulkDropSummary(dropsByType)}`
+      : '';
+    logger.error(`Failed to append ${failed} of ${docs.length} relationship metadata.${reasons}`);
   } else {
     logger.info(`Appended ${docs.length} relationship metadata to metadata datastream`);
   }
 
-  return { docsAttempted: docs.length, docsApplied: successful };
+  return { docsAttempted: docs.length, docsApplied: successful, docsFailed: failed };
 };

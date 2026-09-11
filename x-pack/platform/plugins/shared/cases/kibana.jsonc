@@ -30,6 +30,7 @@
       "workflowsExtensions"
     ],
     "optionalPlugins": [
+      "agentBuilder",
       "cloud",
       "dataViews",
       "dashboard",
@@ -39,14 +40,15 @@
       "usageCollection",
       "spaces",
       "serverless",
-      "savedObjectsTaggingOss"
+      "savedObjectsTaggingOss",
+      "workflowsManagement"
     ],
     "requiredBundles": [
+      "dashboard",
       "esUiShared",
       "kibanaReact",
       "kibanaUtils",
-      "savedObjectsFinder",
-      "dashboard"
+      "savedObjectsFinder"
     ],
     "extraPublicDirs": ["common"]
   }

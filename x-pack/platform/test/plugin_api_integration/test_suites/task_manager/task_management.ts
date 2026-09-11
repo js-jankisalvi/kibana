@@ -101,6 +101,16 @@ export default function ({ getService }: FtrProviderContext) {
       return supertest.get(`/api/ensure_tasks_index_refreshed`).send({}).expect(200);
     }
 
+    async function queryApiKeys(): Promise<Array<{ id: string }>> {
+      const response = await supertest
+        .post('/internal/security/api_key/_query')
+        .send({})
+        .set('kbn-xsrf', 'xxx')
+        .expect(200);
+
+      return response.body.apiKeys;
+    }
+
     async function historyDocs(taskId?: string): Promise<RawDoc[]> {
       return es
         .search({
@@ -239,6 +249,15 @@ export default function ({ getService }: FtrProviderContext) {
         .send({ task })
         .expect(200)
         .then((response: { body: ConcreteTaskInstance }) => response.body);
+    }
+
+    function ensureTaskScheduledWithApiKey(task: Partial<ConcreteTaskInstance>) {
+      return supertest
+        .post('/api/sample_tasks/ensure_scheduled_with_api_key')
+        .set('kbn-xsrf', 'xxx')
+        .send({ task })
+        .expect(200)
+        .then((response: { body: SerializedConcreteTaskInstance }) => response.body);
     }
 
     function releaseTasksWaitingForEventToComplete(event: string) {
@@ -712,6 +731,50 @@ export default function ({ getService }: FtrProviderContext) {
       });
     });
 
+    it('grants a single API key when ensureScheduled is called repeatedly for the same task', async () => {
+      const apiKeysBefore = await queryApiKeys();
+
+      const task = {
+        id: 'test-task-for-sample-task-plugin-to-test-ensure-scheduled-api-key',
+        taskType: 'sampleTask',
+        params: {},
+        schedule: { interval: '1m' },
+      };
+
+      await ensureTaskScheduledWithApiKey(task);
+
+      const scheduled = await currentTask(task.id);
+      const grantedApiKeyId = scheduled.userScope?.apiKeyId;
+
+      expect(scheduled.apiKey).not.empty();
+      expect(grantedApiKeyId).not.to.be(undefined);
+      expect((await queryApiKeys()).length).to.eql(apiKeysBefore.length + 1);
+
+      // API keys are granted before the task document is written, so an ensureScheduled call for
+      // an existing task used to mint a key and then discard it on the version conflict.
+      await ensureTaskScheduledWithApiKey(task);
+      await ensureTaskScheduledWithApiKey(task);
+
+      expect((await queryApiKeys()).length).to.eql(apiKeysBefore.length + 1);
+
+      // The stored task keeps running on the key it was scheduled with.
+      const unchanged = await currentTask(task.id);
+      expect(unchanged.userScope?.apiKeyId).to.eql(grantedApiKeyId);
+
+      // No key was granted and thrown away, so none should be queued for invalidation either.
+      const pendingInvalidation = await es.search({
+        index: '.kibana_task_manager',
+        size: 100,
+        query: { term: { type: 'api_key_to_invalidate' } },
+      });
+
+      expect(
+        pendingInvalidation.hits.hits.filter(
+          (hit) => (hit._source as any).api_key_to_invalidate?.apiKeyId === grantedApiKeyId
+        ).length
+      ).to.eql(0);
+    });
+
     it('captures the requesting user name on userScope when scheduling with an API key', async () => {
       const scheduled = await scheduleTaskWithApiKey({
         id: 'test-task-for-sample-task-plugin-to-capture-user-name',
@@ -740,6 +803,30 @@ export default function ({ getService }: FtrProviderContext) {
       expect(result.userScope?.userName).to.eql(createdApiKey.username);
 
       await supertest.delete('/api/sample_tasks').set('kbn-xsrf', 'xxx').expect(200);
+
+      // Scheduling with an API key grants a Task-Manager-owned key that is queued for
+      // invalidation on task removal. Drain it here so the pending invalidation SO does
+      // not leak into the next test's global `api_key_to_invalidate` count assertions.
+      await delay(1000);
+      await supertest
+        .post('/api/invalidate_api_key_task/run_soon')
+        .send({})
+        .set('kbn-xsrf', 'xxx')
+        .expect(200);
+
+      await retry.try(async () => {
+        const invalidateResponse = await es.search({
+          index: '.kibana_task_manager',
+          size: 100,
+          query: {
+            term: {
+              type: 'api_key_to_invalidate',
+            },
+          },
+        });
+
+        expect(invalidateResponse.hits.hits.length).to.eql(0);
+      });
     });
 
     it('should schedule tasks with fake request if request is provided', async () => {
@@ -760,7 +847,7 @@ export default function ({ getService }: FtrProviderContext) {
       const result = await currentTask('test-task-for-sample-task-plugin-to-test-task-api-key');
 
       expect(result.apiKey).not.empty();
-      expect(result.userScope?.apiKeyCreatedByUser).to.be(true);
+      expect(result.userScope?.apiKeyCreatedByUser).to.be(false);
 
       queryResult = await supertest
         .post('/internal/security/api_key/_query')
@@ -768,8 +855,14 @@ export default function ({ getService }: FtrProviderContext) {
         .set('kbn-xsrf', 'xxx')
         .expect(200);
 
-      // should be one new api key generated in the route
-      expect(queryResult.body.apiKeys.length).eql(apiKeysLength + 1);
+      // route creates one key for the fake request; task manager clones another for the task
+      expect(
+        queryResult.body.apiKeys.filter((apiKey: { id: string }) => {
+          return apiKey.id === result.userScope?.apiKeyId;
+        }).length
+      ).eql(1);
+
+      expect(queryResult.body.apiKeys.length).eql(apiKeysLength + 2);
 
       await supertest.delete('/api/sample_tasks').set('kbn-xsrf', 'xxx').expect(200);
 
@@ -779,8 +872,62 @@ export default function ({ getService }: FtrProviderContext) {
         .set('kbn-xsrf', 'xxx')
         .expect(200);
 
-      // api key should not have been invalidated when the task was deleted
-      expect(queryResult.body.apiKeys.length).eql(apiKeysLength + 1);
+      // cloned task api key should still exist until invalidation runs
+      expect(
+        queryResult.body.apiKeys.filter((apiKey: { id: string }) => {
+          return apiKey.id === result.userScope?.apiKeyId;
+        }).length
+      ).eql(1);
+
+      // api_key_to_invalidate saved object should be created for the cloned key.
+      // The same key can be marked more than once (the one-shot task's completion
+      // removal races the explicit DELETE above, and each removal path creates a
+      // fresh un-deduped SO), so assert it was queued at least once rather than
+      // exactly once. Invalidation itself is verified below.
+      await retry.try(async () => {
+        const response = await es.search({
+          index: '.kibana_task_manager',
+          size: 100,
+          query: {
+            term: {
+              type: 'api_key_to_invalidate',
+            },
+          },
+        });
+
+        expect(
+          response.hits?.hits?.filter((hit: any) => {
+            return hit._source.api_key_to_invalidate?.apiKeyId === result.userScope?.apiKeyId;
+          }).length
+        ).to.be.greaterThan(0);
+      });
+
+      // wait for the api_key_to_invalidate saved object to be older than the invalidation removalDelay (1s)
+      await delay(1000);
+
+      // run the api key invalidation task
+      await supertest
+        .post('/api/invalidate_api_key_task/run_soon')
+        .send({})
+        .set('kbn-xsrf', 'xxx')
+        .expect(200);
+
+      // cloned task api key should be invalidated; route-created key remains
+      await retry.try(async () => {
+        queryResult = await supertest
+          .post('/internal/security/api_key/_query')
+          .send({})
+          .set('kbn-xsrf', 'xxx')
+          .expect(200);
+
+        expect(
+          queryResult.body.apiKeys.filter((apiKey: { id: string }) => {
+            return apiKey.id === result.userScope?.apiKeyId;
+          }).length
+        ).eql(0);
+
+        expect(queryResult.body.apiKeys.length).eql(apiKeysLength + 1);
+      });
     });
 
     it('should return a task run result when asked to run a task now', async () => {
@@ -1802,6 +1949,63 @@ export default function ({ getService }: FtrProviderContext) {
       });
     });
 
+    it('does not surface a framework error when a non-cancellable recurring task overruns its retryAt and is reclaimed', async () => {
+      const task = await scheduleTask(supertest, {
+        taskType: 'sampleRecurringTaskWhichOverrunsRetryAt',
+        schedule: { interval: '5s' },
+        params: {},
+      });
+
+      await retry.try(async () => {
+        const docs = await historyDocs(task.id);
+        expect(docs.length).to.be.greaterThan(1);
+      });
+
+      await retry.try(async () => {
+        const response = await es.search({
+          index: '.kibana-event-log*',
+          size: 100,
+          query: {
+            bool: {
+              filter: [
+                { term: { 'event.provider': 'taskManager' } },
+                { term: { 'event.action': 'task-run' } },
+                { term: { 'kibana.task.id': task.id } },
+              ],
+            },
+          },
+        });
+        expect(response.hits.hits.length).to.be.greaterThan(1);
+      });
+
+      // none of the completed runs should have failed with a version conflict.
+      const failures = await es.search({
+        index: '.kibana-event-log*',
+        size: 100,
+        query: {
+          bool: {
+            filter: [
+              { term: { 'event.provider': 'taskManager' } },
+              { term: { 'event.action': 'task-run' } },
+              { term: { 'kibana.task.id': task.id } },
+              { term: { 'event.outcome': 'failure' } },
+            ],
+          },
+        },
+      });
+      const conflictFailures = failures.hits.hits.filter((hit) =>
+        ((hit._source as Record<string, any>)?.error?.message ?? '').includes('version conflict')
+      );
+      expect(conflictFailures.length).to.eql(0);
+
+      // clean up the event log entries for this task
+      await es.deleteByQuery({
+        index: '.kibana-event-log*',
+        query: { bool: { filter: [{ term: { 'kibana.task.id': task.id } }] } },
+        conflicts: 'proceed',
+      });
+    });
+
     it('should disable a task that returns shouldDisableTask: true', async () => {
       const task = await scheduleTask(supertest, {
         taskType: 'sampleRecurringTaskDisablesItself',
@@ -1878,7 +2082,10 @@ export default function ({ getService }: FtrProviderContext) {
 
         expect(scheduled.userScope?.userProfileId).to.eql(testProfileUid);
         expect(scheduled.userScope?.userName).to.eql(testUserName);
-        expect(scheduled.userScope?.apiKeyCreatedByUser).to.be(true);
+        // Scheduling via a fake request clones the caller's key into a Task-Manager-owned key, so
+        // it is not flagged as user-created (it is invalidated on task removal). Profile resolution
+        // is unaffected since the clone runs with the same identity.
+        expect(scheduled.userScope?.apiKeyCreatedByUser).to.be(false);
 
         // The task is one-shot, so it's removed from saved objects after it
         // runs. The task indexes its captured state into the test history

@@ -86,6 +86,7 @@ export const RuleAttributesIncludedInAAD = [
 // update from AAD
 export type RuleAttributesNotPartiallyUpdatable =
   | 'apiKey'
+  | 'uiamApiKey'
   | 'enabled'
   | 'name'
   | 'tags'
@@ -105,9 +106,13 @@ export type RuleAttributesNotPartiallyUpdatable =
   | 'meta'
   | 'alertDelay';
 
-export const AdHocRunAttributesToEncrypt = ['apiKeyToUse'];
+export const AdHocRunAttributesToEncrypt = ['apiKeyToUse', 'uiamApiKey'];
 export const AdHocRunAttributesIncludedInAAD = ['rule', 'spaceId'];
-export type AdHocRunAttributesNotPartiallyUpdatable = 'rule' | 'spaceId' | 'apiKeyToUse';
+export type AdHocRunAttributesNotPartiallyUpdatable =
+  | 'rule'
+  | 'spaceId'
+  | 'apiKeyToUse'
+  | 'uiamApiKey';
 
 export function setupSavedObjects(
   savedObjects: SavedObjectsServiceSetup,
@@ -134,7 +139,7 @@ export function setupSavedObjects(
       getInAppUrl: (savedObject: SavedObject<RawRule>) => {
         return {
           path: `${triggersActionsRoute}${getRuleDetailsRoute(encodeURIComponent(savedObject.id))}`,
-          uiCapabilitiesPath: 'management.insightsAndAlerting.triggersActions',
+          uiCapabilitiesPath: 'management.insightsAndAlerting.triggersActionsRules',
         };
       },
       onImport(ruleSavedObjects) {
@@ -215,6 +220,10 @@ export function setupSavedObjects(
         apiKeyId: {
           type: 'keyword',
         },
+        uiamApiKeyId: {
+          type: 'keyword',
+          ignore_above: 1024,
+        },
         createdAt: {
           type: 'date',
         },
@@ -260,8 +269,19 @@ export function setupSavedObjects(
     management: {
       importableAndExportable: true,
       getTitle(ruleTemplateSavedObject: SavedObject<RawRuleTemplate>) {
-        return `${ruleTemplateSavedObject.attributes.name}`;
+        const { attributes } = ruleTemplateSavedObject;
+        if (attributes.engine === 'v2' && 'rule' in attributes) {
+          const ruleName = (attributes.rule as { metadata?: { name?: string } }).metadata?.name;
+          if (ruleName) {
+            return ruleName;
+          }
+        }
+        if ('name' in attributes && attributes.name) {
+          return attributes.name;
+        }
+        return ruleTemplateSavedObject.id;
       },
+
       getInAppUrl: (savedObject: SavedObject<RawRuleTemplate>) => {
         return {
           path: `${triggersActionsRoute}${createRuleFromTemplateRoute.replace(

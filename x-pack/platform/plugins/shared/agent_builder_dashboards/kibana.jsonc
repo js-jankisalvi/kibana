@@ -14,8 +14,10 @@
       "dashboard",
       "dashboardMarkdown",
       "data",
-      "agentContextLayer",
+      "agentBuilderSml",
+      "files",
       "share",
+      "uiActions",
       "unifiedSearch"
     ]
   }

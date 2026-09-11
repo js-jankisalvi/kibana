@@ -7,7 +7,11 @@
 
 import type { LensSerializedState } from '@kbn/lens-common';
 import { transformTimeRangeOut, transformTitlesOut } from '@kbn/presentation-publishing';
-import { LENS_UNKNOWN_VIS, type LensByValueSerializedState } from '@kbn/lens-common';
+import {
+  LENS_UNKNOWN_VIS,
+  dropLegacyAggregateQuerySlot,
+  type LensByValueSerializedState,
+} from '@kbn/lens-common';
 import { LENS_ITEM_VERSION_V2 } from '@kbn/lens-common/content_management/constants';
 import type { LensAttributes, LensConfigBuilder } from '@kbn/lens-embeddable-utils';
 import type { DrilldownTransforms } from '@kbn/embeddable-plugin/common';
@@ -32,7 +36,11 @@ export const getTransformOut = (
   transformDrilldownsOut: DrilldownTransforms['transformOut'],
   isDashboardAppRequest: boolean
 ): LensTransformOut => {
-  return function transformOut(storedState, panelReferences) {
+  return function transformOut(storedState, panelReferences, containerReferences, id) {
+    // Capture savedObjectId prior to stripInheritedContext
+    const legacySavedObjectId =
+      'savedObjectId' in storedState ? storedState.savedObjectId : undefined;
+
     const transformsFlow = flow(
       transformTitlesOut<LensSerializedState>,
       transformTimeRangeOut<LensSerializedState>,
@@ -51,6 +59,11 @@ export const getTransformOut = (
       } satisfies LensByRefTransformOutResult;
     }
 
+    // Fallback to handle legacy SO with missing savedObjectRef reference
+    if (!attributes && legacySavedObjectId && typeof legacySavedObjectId === 'string') {
+      return { ...state, ref_id: legacySavedObjectId } satisfies LensByRefTransformOutResult;
+    }
+
     const migratedAttributes = migrateAttributes(attributes);
     const injectedState = injectLensReferences(
       {
@@ -64,7 +77,16 @@ export const getTransformOut = (
       return injectedState as LensByValueTransformOutResult;
     }
 
-    const chartType = builder.getType(migratedAttributes);
+    // Use the reference-injected attributes (not `migratedAttributes`) so the
+    // resolved/remapped panel references win over the chart's embedded ones.
+    // When a dashboard is copied to another space, SO import remaps the panel
+    // `index-pattern` references; `toAPIFormat` reads data view ids from the
+    // attributes' references, so it must see the remapped ids. Otherwise the
+    // panel keeps the original (wrong-space) data view id and fails to render.
+    // See https://github.com/elastic/kibana/issues/268821.
+    const injectedAttributes = injectedState.attributes ?? migratedAttributes;
+
+    const chartType = builder.getType(injectedAttributes);
     // should be filtered out my unmapped panel check
     if (!builder.isSupported(chartType)) {
       throw new Error(`Lens "${chartType}" chart type is not supported`);
@@ -75,8 +97,8 @@ export const getTransformOut = (
       description: attributesDescription,
       ...apiConfig
     } = builder.toAPIFormat({
-      ...migratedAttributes,
-      visualizationType: migratedAttributes.visualizationType ?? LENS_UNKNOWN_VIS,
+      ...injectedAttributes,
+      visualizationType: injectedAttributes.visualizationType ?? LENS_UNKNOWN_VIS,
     });
 
     // For by-value panels the panel-level title/description take precedence and the
@@ -96,12 +118,14 @@ export const getTransformOut = (
         ? { description: attributesDescription }
         : {};
 
-    return {
+    const apiPanelConfig = {
       ...titleFallback,
       ...descriptionFallback,
       ...state,
       ...apiConfig,
     } satisfies LensByValueTransformOutResult;
+
+    return apiPanelConfig;
   };
 };
 
@@ -125,12 +149,12 @@ export function migrateAttributes(
   if (isLensAttributesV0(newAttributes) || isLensAttributesV1(newAttributes)) {
     const v1Attributes = transformToV1LensItemAttributes(newAttributes);
     const v2Attributes = transformToV2LensItemAttributes({ ...v1Attributes, visualizationType });
-    return {
+    return dropLegacyAggregateQuerySlot({
       ...attributes,
       ...v2Attributes,
       version: LENS_ITEM_VERSION_V2 as LensAttributes['version'],
-    };
+    });
   }
 
-  return newAttributes as LensAttributes;
+  return dropLegacyAggregateQuerySlot(newAttributes as LensAttributes);
 }
